@@ -1,12 +1,36 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { importSteam, launchGame, listGames } from "./api";
+import { SOURCE_LABELS } from "./gameArt";
 import { GameCard } from "./GameCard";
-import type { Game, ImportReport } from "./types";
+import { GameDetails } from "./GameDetails";
+import { CheckCircleIcon, CloseIcon, CloudIcon, GridIcon, RefreshIcon, SearchIcon } from "./icons";
+import type { Game, ImportReport, Source } from "./types";
+
+type Filter = "all" | "installed" | "not-installed" | `source:${Source}`;
+type Sort = "title" | "updated" | "size";
+
+const FILTER_TITLES: Record<string, string> = {
+  all: "All games",
+  installed: "Installed",
+  "not-installed": "Not installed",
+};
+
+function matches(game: Game, filter: Filter) {
+  if (filter === "installed") return game.installed;
+  if (filter === "not-installed") return !game.installed;
+  if (filter.startsWith("source:")) return game.source === filter.slice(7);
+  return true;
+}
+
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 export default function App() {
   const [games, setGames] = useState<Game[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
-  const [installedOnly, setInstalledOnly] = useState(false);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [sort, setSort] = useState<Sort>("title");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -16,6 +40,8 @@ export default function App() {
       setGames(await listGames());
     } catch (e) {
       setError(String(e));
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -40,77 +66,194 @@ export default function App() {
     launchGame(game.id).catch((e) => setError(String(e)));
   };
 
+  useEffect(() => {
+    if (!report) return;
+    const timer = window.setTimeout(() => setReport(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [report]);
+
+  const closeDetails = useCallback(() => setSelectedId(null), []);
+
+  const counts = useMemo(() => {
+    const bySource = new Map<Source, number>();
+    for (const g of games) bySource.set(g.source, (bySource.get(g.source) ?? 0) + 1);
+    const installed = games.filter((g) => g.installed).length;
+    return { installed, notInstalled: games.length - installed, bySource };
+  }, [games]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return games.filter(
-      (g) => (!installedOnly || g.installed) && (q === "" || g.title.toLowerCase().includes(q)),
+    const list = games.filter(
+      (g) => matches(g, filter) && (q === "" || g.title.toLowerCase().includes(q)),
     );
-  }, [games, query, installedOnly]);
+    const byTitle = (a: Game, b: Game) => collator.compare(a.title, b.title);
+    if (sort === "title") return list.sort(byTitle);
+    if (sort === "updated")
+      return list.sort((a, b) => (b.lastUpdated ?? 0) - (a.lastUpdated ?? 0) || byTitle(a, b));
+    return list.sort((a, b) => (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0) || byTitle(a, b));
+  }, [games, query, filter, sort]);
+
+  const selected = games.find((g) => g.id === selectedId) ?? null;
+  const viewTitle = filter.startsWith("source:")
+    ? SOURCE_LABELS[filter.slice(7) as Source]
+    : FILTER_TITLES[filter];
+
+  const nav = (value: Filter, label: string, count: number, icon: ReactNode) => (
+    <button
+      key={value}
+      className={`nav-item${filter === value && !selected ? " active" : ""}`}
+      onClick={() => {
+        setFilter(value);
+        setSelectedId(null);
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+      <span className="nav-count">{count}</span>
+    </button>
+  );
 
   return (
-    <div className="app">
-      <header className="toolbar">
-        <h1>Game Library</h1>
-        <input
-          className="search"
-          type="search"
-          placeholder="Search your games"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={installedOnly}
-            onChange={(e) => setInstalledOnly(e.target.checked)}
-          />
-          Installed only
-        </label>
-        <button className="primary" onClick={runSteamImport} disabled={importing}>
-          {importing ? "Importing…" : "Import from Steam"}
-        </button>
-      </header>
-
-      {report && (
-        <div className="banner" role="status">
-          <span>
-            Steam: {report.found} games in {report.libraries.length}{" "}
-            {report.libraries.length === 1 ? "library" : "libraries"} ({report.added} new,{" "}
-            {report.updated} updated
-            {report.uninstalled > 0 && `, ${report.uninstalled} no longer installed`})
-            {report.warnings.length > 0 && (
-              <span className="muted" title={report.warnings.join("\n")}>
-                {" "}
-                · {report.warnings.length} files skipped
-              </span>
-            )}
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden>
+            <i />
+            <i />
+            <i />
           </span>
-          <button onClick={() => setReport(null)}>Dismiss</button>
+          Game Library
         </div>
-      )}
 
-      {error && (
-        <div className="banner error" role="alert">
-          {error}
-          <button onClick={() => setError(null)}>Dismiss</button>
-        </div>
-      )}
+        <nav className="nav">
+          <div className="nav-heading">Library</div>
+          {nav("all", "All games", games.length, <GridIcon />)}
+          {nav("installed", "Installed", counts.installed, <CheckCircleIcon />)}
+          {nav("not-installed", "Not installed", counts.notInstalled, <CloudIcon />)}
 
-      {games.length === 0 ? (
-        <div className="empty">
-          <p>Your library is empty.</p>
-          <p className="muted">Import your installed Steam games to get started.</p>
-          <button className="primary" onClick={runSteamImport} disabled={importing}>
+          {counts.bySource.size > 0 && <div className="nav-heading">Stores</div>}
+          {[...counts.bySource].map(([source, count]) =>
+            nav(
+              `source:${source}`,
+              SOURCE_LABELS[source],
+              count,
+              <span className={`source-dot lg ${source}`} />,
+            ),
+          )}
+        </nav>
+
+        <div className="sidebar-footer">
+          <button className="btn-secondary wide" onClick={runSteamImport} disabled={importing}>
+            <RefreshIcon className={importing ? "spin" : undefined} />
             {importing ? "Importing…" : "Import from Steam"}
           </button>
         </div>
-      ) : (
-        <main className="grid">
-          {visible.map((g) => (
-            <GameCard key={g.id} game={g} onLaunch={launch} />
-          ))}
-        </main>
-      )}
+      </aside>
+
+      <main className="main">
+        {selected ? (
+          <GameDetails game={selected} onBack={closeDetails} onLaunch={launch} />
+        ) : (
+          <>
+            <header className="topbar">
+              <div className="view-title">
+                <h1>{viewTitle}</h1>
+                <span className="muted">{visible.length}</span>
+              </div>
+              <label className="search">
+                <SearchIcon />
+                <input
+                  type="search"
+                  placeholder="Search your games"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </label>
+              <select
+                className="select"
+                value={sort}
+                onChange={(e) => setSort(e.target.value as Sort)}
+                aria-label="Sort by"
+              >
+                <option value="title">Name</option>
+                <option value="updated">Recently updated</option>
+                <option value="size">Size on disk</option>
+              </select>
+            </header>
+
+            {loaded && games.length === 0 ? (
+              <div className="empty">
+                <span className="brand-mark xl" aria-hidden>
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <h2>Your library is empty</h2>
+                <p className="muted">Import your installed Steam games to get started.</p>
+                <button className="btn-play" onClick={runSteamImport} disabled={importing}>
+                  <RefreshIcon className={importing ? "spin" : undefined} />
+                  {importing ? "Importing…" : "Import from Steam"}
+                </button>
+              </div>
+            ) : visible.length === 0 && loaded ? (
+              <div className="empty">
+                <h2>No matches</h2>
+                <p className="muted">
+                  Nothing in {viewTitle.toLowerCase()} matches “{query}”.
+                </p>
+              </div>
+            ) : (
+              <section className="grid">
+                {visible.map((g) => (
+                  <GameCard
+                    key={g.id}
+                    game={g}
+                    onOpen={(game) => setSelectedId(game.id)}
+                    onLaunch={launch}
+                  />
+                ))}
+              </section>
+            )}
+          </>
+        )}
+      </main>
+
+      <div className="toasts">
+        {report && (
+          <div className="toast" role="status">
+            <CheckCircleIcon className="toast-icon ok" />
+            <div>
+              <strong>Steam import finished</strong>
+              <p>
+                {report.found} games in {report.libraries.length}{" "}
+                {report.libraries.length === 1 ? "library" : "libraries"} · {report.added} new,{" "}
+                {report.updated} updated
+                {report.uninstalled > 0 && `, ${report.uninstalled} no longer installed`}
+                {report.warnings.length > 0 && (
+                  <span title={report.warnings.join("\n")}>
+                    {" "}
+                    · {report.warnings.length} files skipped
+                  </span>
+                )}
+              </p>
+            </div>
+            <button className="icon-btn" onClick={() => setReport(null)} aria-label="Dismiss">
+              <CloseIcon />
+            </button>
+          </div>
+        )}
+        {error && (
+          <div className="toast error" role="alert">
+            <div>
+              <strong>Something went wrong</strong>
+              <p>{error}</p>
+            </div>
+            <button className="icon-btn" onClick={() => setError(null)} aria-label="Dismiss">
+              <CloseIcon />
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
