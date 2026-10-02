@@ -4,6 +4,7 @@
 
 pub mod db;
 pub mod model;
+pub mod steam;
 
 pub use db::Library;
 pub use model::{Game, ImportedGame, Source};
