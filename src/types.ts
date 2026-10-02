@@ -13,3 +13,13 @@ export interface Game {
   lastUpdated: number | null;
   addedAt: number;
 }
+
+/** Result of one store import. Mirrors ImportReport in src-tauri/src/lib.rs. */
+export interface ImportReport {
+  libraries: string[];
+  found: number;
+  added: number;
+  updated: number;
+  uninstalled: number;
+  warnings: string[];
+}
