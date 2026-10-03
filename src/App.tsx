@@ -3,7 +3,16 @@ import { importSteam, launchGame, listGames } from "./api";
 import { SOURCE_LABELS } from "./gameArt";
 import { GameCard } from "./GameCard";
 import { GameDetails } from "./GameDetails";
-import { CheckCircleIcon, CloseIcon, CloudIcon, GridIcon, RefreshIcon, SearchIcon } from "./icons";
+import {
+  CheckCircleIcon,
+  CloseIcon,
+  CloudIcon,
+  GearIcon,
+  GridIcon,
+  RefreshIcon,
+  SearchIcon,
+} from "./icons";
+import { Settings } from "./Settings";
 import type { Game, ImportReport, Source } from "./types";
 
 type Filter = "all" | "installed" | "not-installed" | `source:${Source}`;
@@ -34,6 +43,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Bumped when metadata settings change so an open game page looks itself up again.
+  const [metadataVersion, setMetadataVersion] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -73,6 +85,8 @@ export default function App() {
   }, [report]);
 
   const closeDetails = useCallback(() => setSelectedId(null), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const onSettingsSaved = useCallback(() => setMetadataVersion((v) => v + 1), []);
 
   const counts = useMemo(() => {
     const bySource = new Map<Source, number>();
@@ -147,12 +161,22 @@ export default function App() {
             <RefreshIcon className={importing ? "spin" : undefined} />
             {importing ? "Importing…" : "Import from Steam"}
           </button>
+          <button className="btn-secondary wide" onClick={() => setSettingsOpen(true)}>
+            <GearIcon />
+            Settings
+          </button>
         </div>
       </aside>
 
       <main className="main">
         {selected ? (
-          <GameDetails game={selected} onBack={closeDetails} onLaunch={launch} />
+          <GameDetails
+            key={selected.id}
+            game={selected}
+            metadataVersion={metadataVersion}
+            onBack={closeDetails}
+            onLaunch={launch}
+          />
         ) : (
           <>
             <header className="topbar">
@@ -217,6 +241,8 @@ export default function App() {
           </>
         )}
       </main>
+
+      {settingsOpen && <Settings onClose={closeSettings} onSaved={onSettingsSaved} />}
 
       <div className="toasts">
         {report && (

@@ -21,7 +21,7 @@ Status: early development. Nothing is stable yet.
 | 2. Steam ownership | Uninstalled games you own, via the Steam Web API with your own key | Planned |
 | 3. More stores | GOG (via Heroic/GOG Galaxy data), Epic (via Heroic/Legendary), itch.io app | Planned |
 | 4. Manual games | Add any executable, Wine/Proton prefix or emulator ROM by hand | Planned |
-| 5. Metadata | Covers, descriptions, genres and playtime from store APIs and IGDB/SteamGridDB | Planned |
+| 5. Metadata | Covers, descriptions, genres and playtime from store APIs and IGDB/SteamGridDB | In progress (Steam store and IGDB done) |
 | 6. Widget layouts | Drag-and-drop game page editor: cover, description, playtime, screenshots, links, notes and more | Planned |
 | 7. Deal finder | Price tracking across stores that skips anything you already own, with wishlist alerts | Planned |
 | 8. Polish | Collections, filters, controller navigation, Windows and macOS packages | Planned |
