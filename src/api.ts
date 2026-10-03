@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { CachedMetadata, Game, ImportReport, MetadataSettings } from "./types";
+import type {
+  CachedMetadata,
+  Game,
+  ImportReport,
+  MetadataSettings,
+  SteamSettings,
+} from "./types";
 
 export const listGames = () => invoke<Game[]>("list_games");
 export const importSteam = () => invoke<ImportReport>("import_steam");
@@ -13,6 +19,14 @@ export const metadataSettings = () => invoke<MetadataSettings>("metadata_setting
 /** Checks and saves IGDB credentials; two empty strings switch IGDB off. */
 export const setIgdbCredentials = (clientId: string, clientSecret: string) =>
   invoke<MetadataSettings>("set_igdb_credentials", { clientId, clientSecret });
+
+export const steamSettings = () => invoke<SteamSettings>("steam_settings");
+/**
+ * Checks and saves the Steam account. An empty key keeps the saved one; two empty strings
+ * disconnect the account.
+ */
+export const setSteamAccount = (apiKey: string, profile: string) =>
+  invoke<SteamSettings>("set_steam_account", { apiKey, profile });
 
 /** Opens a web page in the user's browser. */
 export const openExternal = (url: string) => openUrl(url);

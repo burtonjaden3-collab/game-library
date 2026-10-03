@@ -16,7 +16,7 @@ import { Settings } from "./Settings";
 import type { Game, ImportReport, Source } from "./types";
 
 type Filter = "all" | "installed" | "not-installed" | `source:${Source}`;
-type Sort = "title" | "updated" | "size";
+type Sort = "title" | "played" | "recent" | "updated" | "size";
 
 const FILTER_TITLES: Record<string, string> = {
   all: "All games",
@@ -102,6 +102,12 @@ export default function App() {
     );
     const byTitle = (a: Game, b: Game) => collator.compare(a.title, b.title);
     if (sort === "title") return list.sort(byTitle);
+    if (sort === "played")
+      return list.sort(
+        (a, b) => (b.playtimeMinutes ?? 0) - (a.playtimeMinutes ?? 0) || byTitle(a, b),
+      );
+    if (sort === "recent")
+      return list.sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0) || byTitle(a, b));
     if (sort === "updated")
       return list.sort((a, b) => (b.lastUpdated ?? 0) - (a.lastUpdated ?? 0) || byTitle(a, b));
     return list.sort((a, b) => (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0) || byTitle(a, b));
@@ -200,6 +206,8 @@ export default function App() {
                 aria-label="Sort by"
               >
                 <option value="title">Name</option>
+                <option value="played">Most played</option>
+                <option value="recent">Recently played</option>
                 <option value="updated">Recently updated</option>
                 <option value="size">Size on disk</option>
               </select>
@@ -213,7 +221,8 @@ export default function App() {
                   <i />
                 </span>
                 <h2>Your library is empty</h2>
-                <p className="muted">Import your installed Steam games to get started.</p>
+                <p className="muted">Import your Steam games to get started. Connect your Steam account in
+                  Settings to include the ones you haven't installed.</p>
                 <button className="btn-play" onClick={runSteamImport} disabled={importing}>
                   <RefreshIcon className={importing ? "spin" : undefined} />
                   {importing ? "Importing…" : "Import from Steam"}
@@ -242,7 +251,13 @@ export default function App() {
         )}
       </main>
 
-      {settingsOpen && <Settings onClose={closeSettings} onSaved={onSettingsSaved} />}
+      {settingsOpen && (
+        <Settings
+          onClose={closeSettings}
+          onSaved={onSettingsSaved}
+          onSteamConnected={() => void runSteamImport()}
+        />
+      )}
 
       <div className="toasts">
         {report && (
@@ -251,14 +266,19 @@ export default function App() {
             <div>
               <strong>Steam import finished</strong>
               <p>
-                {report.found} games in {report.libraries.length}{" "}
-                {report.libraries.length === 1 ? "library" : "libraries"} · {report.added} new,{" "}
+                {report.owned !== null
+                  ? `${report.found} games, ${report.owned} owned on Steam`
+                  : `${report.found} games in ${report.libraries.length} ${
+                      report.libraries.length === 1 ? "library" : "libraries"
+                    }`}{" "}
+                · {report.added} new,{" "}
                 {report.updated} updated
                 {report.uninstalled > 0 && `, ${report.uninstalled} no longer installed`}
                 {report.warnings.length > 0 && (
                   <span title={report.warnings.join("\n")}>
                     {" "}
-                    · {report.warnings.length} files skipped
+                    · {report.warnings.length}{" "}
+                    {report.warnings.length === 1 ? "warning" : "warnings"}
                   </span>
                 )}
               </p>

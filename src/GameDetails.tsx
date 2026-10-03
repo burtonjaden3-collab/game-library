@@ -2,14 +2,20 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { openExternal } from "./api";
 import { Art } from "./Art";
 import { Cover } from "./Cover";
-import { SOURCE_LABELS, artFor, formatDate, formatSize, generatedPalette } from "./gameArt";
+import {
+  SOURCE_LABELS,
+  artFor,
+  formatDate,
+  formatPlaytime,
+  formatSize,
+  generatedPalette,
+} from "./gameArt";
 import {
   ArrowLeftIcon,
   BuildingIcon,
   CalendarIcon,
   ClockIcon,
   CloseIcon,
-  CloudIcon,
   CodeIcon,
   DownloadIcon,
   DriveIcon,
@@ -67,7 +73,8 @@ export function GameDetails({
 
   const size = formatSize(game.sizeBytes);
   const updated = formatDate(game.lastUpdated);
-  const added = formatDate(game.addedAt);
+  const played = formatPlaytime(game.playtimeMinutes);
+  const lastPlayed = formatDate(game.lastPlayed);
   const year = meta?.releaseDate?.match(/\d{4}/)?.[0];
   const tagline = [...(meta?.genres.slice(0, 3) ?? []), year].filter(Boolean).join(" · ");
 
@@ -115,10 +122,10 @@ export function GameDetails({
         </div>
         <div className="widget-stack">
           <div className="widget-row">
+            <Stat icon={<PlayIcon />} label="Time played" value={played ?? "—"} />
+            <Stat icon={<CalendarIcon />} label="Last played" value={lastPlayed ?? "—"} />
             <Stat icon={<DriveIcon />} label="Size on disk" value={size ?? "—"} />
-            <Stat icon={<CloudIcon />} label="Store" value={SOURCE_LABELS[game.source]} />
             <Stat icon={<ClockIcon />} label="Last updated" value={updated ?? "—"} />
-            <Stat icon={<ClockIcon />} label="Added" value={added ?? "—"} />
           </div>
 
           {meta && <InfoRow meta={meta} />}

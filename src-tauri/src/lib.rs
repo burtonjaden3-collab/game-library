@@ -4,6 +4,7 @@ use library_core::db::{unix_now, MergeStats};
 use library_core::metadata::igdb::{Credentials, Igdb};
 use library_core::metadata::steam::SteamStore;
 use library_core::metadata::{self, CachedMetadata, MetadataProvider, UreqHttp};
+use library_core::steam::web::{self as steam_web, Account};
 use library_core::{steam, Game, Library, Source};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -15,10 +16,14 @@ struct AppState {
     http: Arc<UreqHttp>,
     /// Set once the user has entered working IGDB credentials.
     igdb: Mutex<Option<Arc<Igdb>>>,
+    /// Set once the user has connected their Steam account.
+    steam: Mutex<Option<Account>>,
 }
 
 const IGDB_CLIENT_ID: &str = "igdb.client_id";
 const IGDB_CLIENT_SECRET: &str = "igdb.client_secret";
+const STEAM_API_KEY: &str = "steam.api_key";
+const STEAM_ID: &str = "steam.id";
 
 /// Errors cross the IPC boundary as plain strings the UI can show.
 type CmdResult<T> = Result<T, String>;
@@ -37,25 +42,51 @@ fn list_games(state: State<'_, AppState>) -> CmdResult<Vec<Game>> {
 struct ImportReport {
     libraries: Vec<String>,
     found: usize,
+    /// How many games the Steam account owns, when one is connected and answered.
+    owned: Option<usize>,
     #[serde(flatten)]
     stats: MergeStats,
     warnings: Vec<String>,
 }
 
-/// Scans local Steam installs and merges what they report into the library.
+/// Scans local Steam installs and, when a Steam account is connected, adds every game
+/// it owns, then merges the lot into the library.
 #[tauri::command]
 async fn import_steam(app: AppHandle, state: State<'_, AppState>) -> CmdResult<ImportReport> {
     let home = app.path().home_dir().map_err(err)?;
-    let scan = tauri::async_runtime::spawn_blocking(move || steam::scan(&home)).await.map_err(err)?;
-    if scan.roots.is_empty() {
-        return Err("Steam wasn't found. Looked in ~/.local/share/Steam, ~/.steam and the Flatpak and \
-                    Snap locations."
-            .into());
-    }
-    let stats = state.library.lock().map_err(err)?.merge_import(Source::Steam, &scan.games).map_err(err)?;
+    let account = state.steam.lock().map_err(err)?.clone();
+    let http = state.http.clone();
+    let (mut scan, owned) = tauri::async_runtime::spawn_blocking(move || {
+        let owned = account.map(|a| steam_web::owned_games(&*http, &a));
+        (steam::scan(&home), owned)
+    })
+    .await
+    .map_err(err)?;
+
+    let owned = match owned {
+        None if scan.roots.is_empty() => {
+            return Err("Steam wasn't found. Looked in ~/.local/share/Steam, ~/.steam and the Flatpak \
+                        and Snap locations. You can also connect your Steam account in Settings."
+                .into())
+        }
+        Some(Err(e)) if scan.roots.is_empty() => return Err(format!("Couldn't load your Steam games: {e}")),
+        Some(Err(e)) => {
+            scan.warnings.push(format!("Couldn't load your Steam account's games: {e}"));
+            None
+        }
+        Some(Ok(owned)) => Some(owned),
+        None => None,
+    };
+    let owned_count = owned.as_ref().map(Vec::len);
+    let games = match owned {
+        Some(owned) => steam_web::with_owned_games(scan.games, owned),
+        None => scan.games,
+    };
+    let stats = state.library.lock().map_err(err)?.merge_import(Source::Steam, &games).map_err(err)?;
     Ok(ImportReport {
         libraries: scan.libraries.iter().map(|p| p.display().to_string()).collect(),
-        found: scan.games.len(),
+        found: games.len(),
+        owned: owned_count,
         stats,
         warnings: scan.warnings,
     })
@@ -165,6 +196,68 @@ async fn set_igdb_credentials(
     Ok(MetadataSettings { igdb_client_id })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SteamSettings {
+    /// The connected account's SteamID64. The API key never goes back to the UI.
+    steam_id: Option<String>,
+}
+
+#[tauri::command]
+fn steam_settings(state: State<'_, AppState>) -> CmdResult<SteamSettings> {
+    Ok(SteamSettings { steam_id: state.steam.lock().map_err(err)?.as_ref().map(|a| a.steam_id.clone()) })
+}
+
+/// Checks and saves the user's Steam Web API key and profile, or disconnects the account
+/// when both are empty. An empty key with a profile keeps the saved key, so the profile
+/// can be changed without pasting the key again.
+#[tauri::command]
+async fn set_steam_account(
+    state: State<'_, AppState>,
+    api_key: String,
+    profile: String,
+) -> CmdResult<SteamSettings> {
+    let (api_key, profile) = (api_key.trim().to_owned(), profile.trim().to_owned());
+    let account = if api_key.is_empty() && profile.is_empty() {
+        None
+    } else {
+        let saved_key = state.steam.lock().map_err(err)?.as_ref().map(|a| a.api_key.clone());
+        let api_key = match (api_key.is_empty(), saved_key) {
+            (false, _) => api_key,
+            (true, Some(saved)) => saved,
+            (true, None) => return Err("Enter your Steam Web API key.".into()),
+        };
+        if profile.is_empty() {
+            return Err("Enter your Steam profile URL or SteamID64.".into());
+        }
+        let http = state.http.clone();
+        let account = tauri::async_runtime::spawn_blocking(move || {
+            let steam_id = steam_web::resolve_profile(&*http, &api_key, &profile)?;
+            let account = Account { api_key, steam_id };
+            steam_web::owned_games(&*http, &account)?;
+            Ok::<_, library_core::Error>(account)
+        })
+        .await
+        .map_err(err)?
+        .map_err(err)?;
+        Some(account)
+    };
+
+    let library = state.library.lock().map_err(err)?;
+    library.set_setting(STEAM_API_KEY, account.as_ref().map(|a| a.api_key.as_str())).map_err(err)?;
+    library.set_setting(STEAM_ID, account.as_ref().map(|a| a.steam_id.as_str())).map_err(err)?;
+    let steam_id = account.as_ref().map(|a| a.steam_id.clone());
+    *state.steam.lock().map_err(err)? = account;
+    Ok(SteamSettings { steam_id })
+}
+
+fn saved_steam(library: &Library) -> library_core::Result<Option<Account>> {
+    Ok(library
+        .setting(STEAM_API_KEY)?
+        .zip(library.setting(STEAM_ID)?)
+        .map(|(api_key, steam_id)| Account { api_key, steam_id }))
+}
+
 fn saved_igdb(library: &Library) -> library_core::Result<Option<Arc<Igdb>>> {
     let id = library.setting(IGDB_CLIENT_ID)?;
     let secret = library.setting(IGDB_CLIENT_SECRET)?;
@@ -181,10 +274,12 @@ pub fn run() {
             let db_path = app.path().app_data_dir()?.join("library.db");
             let library = Library::open(&db_path)?;
             let igdb = saved_igdb(&library)?;
+            let steam = saved_steam(&library)?;
             app.manage(AppState {
                 library: Mutex::new(library),
                 http: Arc::new(UreqHttp::default()),
                 igdb: Mutex::new(igdb),
+                steam: Mutex::new(steam),
             });
             Ok(())
         })
@@ -194,7 +289,9 @@ pub fn run() {
             launch_game,
             game_metadata,
             metadata_settings,
-            set_igdb_credentials
+            set_igdb_credentials,
+            steam_settings,
+            set_steam_account
         ])
         .run(tauri::generate_context!())
         .expect("error while running Game Library");

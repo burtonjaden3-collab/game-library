@@ -39,6 +39,10 @@ const MIGRATIONS: &[&str] = &[
         value TEXT NOT NULL
     );
 "#,
+    r#"
+    ALTER TABLE games ADD COLUMN playtime_minutes INTEGER;
+    ALTER TABLE games ADD COLUMN last_played INTEGER;
+"#,
 ];
 
 /// Counts from merging one importer's results into the library.
@@ -168,20 +172,34 @@ impl Library {
                 )
                 .optional()?;
             let size = g.size_bytes.map(|s| s as i64);
+            let playtime = g.playtime_minutes.map(|m| m as i64);
             match existing {
                 Some(id) => {
                     tx.execute(
                         "UPDATE games SET title = ?1, install_dir = ?2, installed = ?3,
-                                size_bytes = ?4, last_updated = ?5 WHERE id = ?6",
-                        params![g.title, g.install_dir, g.installed, size, g.last_updated, id],
+                                size_bytes = ?4, last_updated = ?5,
+                                playtime_minutes = COALESCE(?6, playtime_minutes),
+                                last_played = COALESCE(?7, last_played)
+                         WHERE id = ?8",
+                        params![
+                            g.title,
+                            g.install_dir,
+                            g.installed,
+                            size,
+                            g.last_updated,
+                            playtime,
+                            g.last_played,
+                            id
+                        ],
                     )?;
                     stats.updated += 1;
                 }
                 None => {
                     tx.execute(
                         "INSERT INTO games (source, source_id, title, install_dir, installed,
-                                            size_bytes, last_updated, added_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                                            size_bytes, last_updated, added_at,
+                                            playtime_minutes, last_played)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                         params![
                             source.as_str(),
                             g.source_id,
@@ -190,7 +208,9 @@ impl Library {
                             g.installed,
                             size,
                             g.last_updated,
-                            now
+                            now,
+                            playtime,
+                            g.last_played
                         ],
                     )?;
                     stats.added += 1;
@@ -209,7 +229,7 @@ impl Library {
 }
 
 const SELECT_GAME: &str = "SELECT id, source, source_id, title, install_dir, installed, size_bytes,
-                                  last_updated, added_at
+                                  last_updated, added_at, playtime_minutes, last_played
                            FROM games";
 
 fn game_from_row(r: &Row) -> rusqlite::Result<Game> {
@@ -230,6 +250,8 @@ fn game_from_row(r: &Row) -> rusqlite::Result<Game> {
         size_bytes: r.get::<_, Option<i64>>(6)?.map(|s| s as u64),
         last_updated: r.get(7)?,
         added_at: r.get(8)?,
+        playtime_minutes: r.get::<_, Option<i64>>(9)?.map(|m| m as u64),
+        last_played: r.get(10)?,
     })
 }
 
@@ -251,6 +273,8 @@ mod tests {
             installed,
             size_bytes: Some(1024),
             last_updated: Some(1_700_000_000),
+            playtime_minutes: None,
+            last_played: None,
         }
     }
 
@@ -272,6 +296,20 @@ mod tests {
         assert!(dota.installed);
         let tf2 = games.iter().find(|g| g.source_id == "440").unwrap();
         assert!(!tf2.installed);
+    }
+
+    #[test]
+    fn playtime_is_kept_when_a_later_scan_does_not_know_it() {
+        let mut lib = Library::open_in_memory().unwrap();
+        let played = ImportedGame {
+            playtime_minutes: Some(90),
+            last_played: Some(1_750_000_000),
+            ..steam("570", "Dota 2", true)
+        };
+        lib.merge_import(Source::Steam, &[played]).unwrap();
+        lib.merge_import(Source::Steam, &[steam("570", "Dota 2", true)]).unwrap();
+        let dota = &lib.games().unwrap()[0];
+        assert_eq!((dota.playtime_minutes, dota.last_played), (Some(90), Some(1_750_000_000)));
     }
 
     #[test]
