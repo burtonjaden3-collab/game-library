@@ -23,3 +23,32 @@ export interface ImportReport {
   uninstalled: number;
   warnings: string[];
 }
+
+/** Mirrors library_core::metadata::GameMetadata. */
+export interface GameMetadata {
+  provider: "steam" | "igdb" | string;
+  sourceUrl: string | null;
+  summary: string | null;
+  description: string | null;
+  genres: string[];
+  features: string[];
+  developers: string[];
+  publishers: string[];
+  releaseDate: string | null;
+  platforms: string[];
+  rating: { score: number; source: string; url: string | null } | null;
+  website: string | null;
+  coverUrl: string | null;
+  screenshots: { thumbnail: string; full: string }[];
+}
+
+/** Mirrors library_core::metadata::CachedMetadata. `metadata` is null when nothing knew the game. */
+export interface CachedMetadata {
+  metadata: GameMetadata | null;
+  fetchedAt: number;
+}
+
+/** Mirrors MetadataSettings in src-tauri/src/lib.rs. */
+export interface MetadataSettings {
+  igdbClientId: string | null;
+}

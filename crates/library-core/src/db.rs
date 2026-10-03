@@ -3,12 +3,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
+use crate::metadata::{CachedMetadata, GameMetadata};
 use crate::model::{Game, ImportedGame, Source};
-use crate::Result;
+use crate::{Error, Result};
 
 /// Schema migrations, applied in order. `PRAGMA user_version` records how many
 /// have run, so append new ones and never edit old ones.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
     CREATE TABLE games (
         id           INTEGER PRIMARY KEY,
         source       TEXT    NOT NULL,
@@ -22,7 +24,22 @@ const MIGRATIONS: &[&str] = &[r#"
         UNIQUE (source, source_id)
     );
     CREATE INDEX games_title ON games (title COLLATE NOCASE);
-"#];
+"#,
+    r#"
+    -- One row per game we have looked up. data is GameMetadata as JSON, or NULL when
+    -- no provider knew the game (so we don't ask again on every visit).
+    CREATE TABLE game_metadata (
+        game_id    INTEGER PRIMARY KEY REFERENCES games (id) ON DELETE CASCADE,
+        provider   TEXT,
+        data       TEXT,
+        fetched_at INTEGER NOT NULL
+    );
+    CREATE TABLE settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+"#,
+];
 
 /// Counts from merging one importer's results into the library.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -66,13 +83,70 @@ impl Library {
     }
 
     pub fn games(&self) -> Result<Vec<Game>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, source, source_id, title, install_dir, installed, size_bytes,
-                    last_updated, added_at
-             FROM games ORDER BY title COLLATE NOCASE",
-        )?;
+        let mut stmt = self.conn.prepare(&format!("{SELECT_GAME} ORDER BY title COLLATE NOCASE"))?;
         let games = stmt.query_map([], game_from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(games)
+    }
+
+    pub fn game(&self, id: i64) -> Result<Option<Game>> {
+        Ok(self.conn.query_row(&format!("{SELECT_GAME} WHERE id = ?1"), [id], game_from_row).optional()?)
+    }
+
+    /// The cached metadata lookup for a game, if it was ever looked up. An entry whose
+    /// JSON no longer parses (written by a different version) counts as never looked up.
+    pub fn cached_metadata(&self, game_id: i64) -> Result<Option<CachedMetadata>> {
+        let row: Option<(Option<String>, i64)> = self
+            .conn
+            .query_row("SELECT data, fetched_at FROM game_metadata WHERE game_id = ?1", [game_id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()?;
+        Ok(row.and_then(|(data, fetched_at)| match data {
+            None => Some(CachedMetadata { metadata: None, fetched_at }),
+            Some(json) => serde_json::from_str(&json)
+                .ok()
+                .map(|metadata| CachedMetadata { metadata: Some(metadata), fetched_at }),
+        }))
+    }
+
+    /// Records the result of looking a game up; `None` means no provider knew it.
+    pub fn save_metadata(&self, game_id: i64, metadata: Option<&GameMetadata>) -> Result<CachedMetadata> {
+        let fetched_at = unix_now();
+        let data =
+            metadata.map(serde_json::to_string).transpose().map_err(|e| Error::Other(e.to_string()))?;
+        self.conn.execute(
+            "INSERT INTO game_metadata (game_id, provider, data, fetched_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (game_id) DO UPDATE SET
+                provider = excluded.provider, data = excluded.data, fetched_at = excluded.fetched_at",
+            params![game_id, metadata.map(|m| m.provider.as_str()), data, fetched_at],
+        )?;
+        Ok(CachedMetadata { metadata: metadata.cloned(), fetched_at })
+    }
+
+    /// Drops every "not found" entry so those games are looked up again, e.g. after a
+    /// new provider was switched on.
+    pub fn forget_missing_metadata(&self) -> Result<usize> {
+        Ok(self.conn.execute("DELETE FROM game_metadata WHERE data IS NULL", [])?)
+    }
+
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// Stores a setting, or removes it when `value` is `None`.
+    pub fn set_setting(&self, key: &str, value: Option<&str>) -> Result<()> {
+        match value {
+            Some(v) => self.conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![key, v],
+            )?,
+            None => self.conn.execute("DELETE FROM settings WHERE key = ?1", [key])?,
+        };
+        Ok(())
     }
 
     /// Merges one importer's full scan of `source` into the library: new games
@@ -134,6 +208,10 @@ impl Library {
     }
 }
 
+const SELECT_GAME: &str = "SELECT id, source, source_id, title, install_dir, installed, size_bytes,
+                                  last_updated, added_at
+                           FROM games";
+
 fn game_from_row(r: &Row) -> rusqlite::Result<Game> {
     let source: String = r.get(1)?;
     Ok(Game {
@@ -155,7 +233,8 @@ fn game_from_row(r: &Row) -> rusqlite::Result<Game> {
     })
 }
 
-fn unix_now() -> i64 {
+/// Current Unix time in seconds.
+pub fn unix_now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
@@ -205,6 +284,40 @@ mod tests {
         .unwrap();
         let titles: Vec<_> = lib.games().unwrap().into_iter().map(|g| g.title).collect();
         assert_eq!(titles, ["Alpha", "beta", "Gamma"]);
+    }
+
+    #[test]
+    fn metadata_cache_round_trips() {
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.merge_import(Source::Steam, &[steam("570", "Dota 2", true), steam("440", "TF2", true)]).unwrap();
+        let ids: Vec<i64> = lib.games().unwrap().iter().map(|g| g.id).collect();
+        assert_eq!(lib.game(ids[0]).unwrap().unwrap().title, "Dota 2");
+        assert_eq!(lib.game(9999).unwrap(), None);
+        assert_eq!(lib.cached_metadata(ids[0]).unwrap(), None);
+
+        let meta =
+            GameMetadata { provider: "steam".into(), genres: vec!["MOBA".into()], ..Default::default() };
+        lib.save_metadata(ids[0], Some(&meta)).unwrap();
+        lib.save_metadata(ids[1], None).unwrap();
+        assert_eq!(lib.cached_metadata(ids[0]).unwrap().unwrap().metadata, Some(meta.clone()));
+        assert_eq!(lib.cached_metadata(ids[1]).unwrap().unwrap().metadata, None);
+
+        // Overwrites, and forgetting misses keeps hits.
+        lib.save_metadata(ids[0], Some(&meta)).unwrap();
+        assert_eq!(lib.forget_missing_metadata().unwrap(), 1);
+        assert_eq!(lib.cached_metadata(ids[1]).unwrap(), None);
+        assert!(lib.cached_metadata(ids[0]).unwrap().is_some());
+    }
+
+    #[test]
+    fn settings_set_and_clear() {
+        let lib = Library::open_in_memory().unwrap();
+        assert_eq!(lib.setting("k").unwrap(), None);
+        lib.set_setting("k", Some("a")).unwrap();
+        lib.set_setting("k", Some("b")).unwrap();
+        assert_eq!(lib.setting("k").unwrap().as_deref(), Some("b"));
+        lib.set_setting("k", None).unwrap();
+        assert_eq!(lib.setting("k").unwrap(), None);
     }
 
     #[test]
