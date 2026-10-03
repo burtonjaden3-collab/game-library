@@ -46,6 +46,10 @@ pub struct ImportedGame {
     pub size_bytes: Option<u64>,
     /// Unix seconds.
     pub last_updated: Option<i64>,
+    /// Total time played, when the source knows it. `None` keeps what the library has.
+    pub playtime_minutes: Option<u64>,
+    /// Unix seconds, when the source knows it. `None` keeps what the library has.
+    pub last_played: Option<i64>,
 }
 
 /// A game as stored in the library and sent to the frontend.
@@ -62,4 +66,7 @@ pub struct Game {
     pub last_updated: Option<i64>,
     /// Unix seconds when the game first entered the library.
     pub added_at: i64,
+    pub playtime_minutes: Option<u64>,
+    /// Unix seconds.
+    pub last_played: Option<i64>,
 }

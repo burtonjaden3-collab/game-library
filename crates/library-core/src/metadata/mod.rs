@@ -361,6 +361,8 @@ pub(crate) mod tests {
             size_bytes: None,
             last_updated: None,
             added_at: 0,
+            playtime_minutes: None,
+            last_played: None,
         }
     }
 

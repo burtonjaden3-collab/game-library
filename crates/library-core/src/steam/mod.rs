@@ -2,9 +2,10 @@
 //! `libraryfolders.vdf`, and turns each `appmanifest_<appid>.acf` into a game.
 //!
 //! This reads local files only, so it sees installed (and installing) games.
-//! Owned-but-not-installed games need the Steam Web API and come later.
+//! Owned-but-not-installed games come from the Steam Web API, in [`web`].
 
 pub mod vdf;
+pub mod web;
 
 use std::collections::HashSet;
 use std::fs;
@@ -173,6 +174,8 @@ pub fn parse_app_manifest(text: &str, library: &Path) -> Result<Option<ImportedG
         installed,
         size_bytes: number("SizeOnDisk").filter(|&s| s > 0),
         last_updated: number("LastUpdated").filter(|&t| t > 0).map(|t| t as i64),
+        playtime_minutes: None,
+        last_played: None,
     }))
 }
 
@@ -217,6 +220,8 @@ mod tests {
                 installed: true,
                 size_bytes: Some(123_456_789),
                 last_updated: Some(1_727_740_800),
+                playtime_minutes: None,
+                last_played: None,
             }
         );
     }

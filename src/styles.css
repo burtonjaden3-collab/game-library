@@ -1055,6 +1055,9 @@ button:disabled {
 .modal-section {
   padding: 18px 22px 22px;
 }
+.modal-section + .modal-section {
+  border-top: 1px solid var(--border);
+}
 .modal-section h3 {
   margin: 0 0 6px;
   font-size: 14px;

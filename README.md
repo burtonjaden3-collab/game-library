@@ -18,7 +18,7 @@ Status: early development. Nothing is stable yet.
 | --- | --- | --- |
 | 0. Scaffold | Tauri 2 app, SQLite library, Linux CI | Done |
 | 1. Steam import | Installed Steam games from every library folder (native, Flatpak, Snap), launch via Steam | Done |
-| 2. Steam ownership | Uninstalled games you own, via the Steam Web API with your own key | Planned |
+| 2. Steam ownership | Uninstalled games you own and your playtime, via the Steam Web API with your own key | Done |
 | 3. More stores | GOG (via Heroic/GOG Galaxy data), Epic (via Heroic/Legendary), itch.io app | Planned |
 | 4. Manual games | Add any executable, Wine/Proton prefix or emulator ROM by hand | Planned |
 | 5. Metadata | Covers, descriptions, genres and playtime from store APIs and IGDB/SteamGridDB | In progress (Steam store and IGDB done) |

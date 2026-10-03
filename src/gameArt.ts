@@ -71,6 +71,15 @@ export function formatDate(unixSeconds: number | null) {
   });
 }
 
+/** "Never played", "45 min" or "12.5 hrs"; null when unknown. */
+export function formatPlaytime(minutes: number | null) {
+  if (minutes === null) return null;
+  if (minutes === 0) return "Never played";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  return `${hours < 10 ? hours.toFixed(1) : Math.round(hours).toLocaleString()} hrs`;
+}
+
 export const SOURCE_LABELS: Record<Game["source"], string> = {
   steam: "Steam",
   epic: "Epic Games",

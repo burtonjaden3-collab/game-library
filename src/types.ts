@@ -12,12 +12,17 @@ export interface Game {
   sizeBytes: number | null;
   lastUpdated: number | null;
   addedAt: number;
+  /** Known once a Steam account is connected. */
+  playtimeMinutes: number | null;
+  lastPlayed: number | null;
 }
 
 /** Result of one store import. Mirrors ImportReport in src-tauri/src/lib.rs. */
 export interface ImportReport {
   libraries: string[];
   found: number;
+  /** Games the connected Steam account owns; null when no account is connected. */
+  owned: number | null;
   added: number;
   updated: number;
   uninstalled: number;
@@ -51,4 +56,9 @@ export interface CachedMetadata {
 /** Mirrors MetadataSettings in src-tauri/src/lib.rs. */
 export interface MetadataSettings {
   igdbClientId: string | null;
+}
+
+/** Mirrors SteamSettings in src-tauri/src/lib.rs. */
+export interface SteamSettings {
+  steamId: string | null;
 }
