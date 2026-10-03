@@ -1,36 +1,45 @@
-import { useState } from "react";
+import { Cover } from "./Cover";
+import { formatSize } from "./gameArt";
+import { DownloadIcon, PlayIcon } from "./icons";
 import type { Game } from "./types";
 
-const steamHeader = (appId: string) =>
-  `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
-
-function formatSize(bytes: number | null) {
-  if (!bytes) return null;
-  const gb = bytes / 1024 ** 3;
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
-}
-
-export function GameCard({ game, onLaunch }: { game: Game; onLaunch: (game: Game) => void }) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const cover = game.source === "steam" && !imageFailed ? steamHeader(game.sourceId) : null;
+export function GameCard({
+  game,
+  onOpen,
+  onLaunch,
+}: {
+  game: Game;
+  onOpen: (game: Game) => void;
+  onLaunch: (game: Game) => void;
+}) {
   const size = game.installed ? formatSize(game.sizeBytes) : null;
 
   return (
-    <article className={`card${game.installed ? "" : " not-installed"}`} title={game.title}>
-      <div className="cover">
-        <span className="cover-fallback">{game.title}</span>
-        {cover && <img src={cover} alt="" loading="lazy" onError={() => setImageFailed(true)} />}
+    <article className={`card${game.installed ? "" : " not-installed"}`}>
+      <div className="card-art">
+        <button className="card-cover" onClick={() => onOpen(game)} title={game.title}>
+          <Cover game={game} />
+          {!game.installed && <span className="chip chip-overlay">Not installed</span>}
+        </button>
+        <button
+          className={`card-action${game.installed ? " play" : ""}`}
+          onClick={() => onLaunch(game)}
+          aria-label={`${game.installed ? "Play" : "Install"} ${game.title}`}
+          title={game.installed ? "Play" : "Install"}
+        >
+          {game.installed ? (
+            <PlayIcon width={24} height={24} />
+          ) : (
+            <DownloadIcon width={22} height={22} />
+          )}
+        </button>
       </div>
-      <div className="card-body">
+      <div className="card-meta">
         <h2>{game.title}</h2>
-        <span className={`badge ${game.source}`}>{game.source}</span>
-        {size && <span className="muted small">{size}</span>}
-        {!game.installed && <span className="badge muted">not installed</span>}
-        <div className="card-actions">
-          <button className={game.installed ? "primary" : ""} onClick={() => onLaunch(game)}>
-            {game.installed ? "Play" : "Install"}
-          </button>
-        </div>
+        <p>
+          <span className={`source-dot ${game.source}`} />
+          {size ?? (game.installed ? "Installed" : "Not installed")}
+        </p>
       </div>
     </article>
   );
